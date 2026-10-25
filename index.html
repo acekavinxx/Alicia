@@ -42,8 +42,8 @@
     const ctx=canvas.getContext('2d');
     const W=960,H=540;
     const keys={},justPressed=new Set();
-    const names=['霓虹飞车','星际突击','蘑菇王国','弹珠工坊','银河守卫','小蛇大冒险','果园派对'];
-    const icons=['🏎️','🚀','🍄','🪄','🛸','🐍','🍓'];
+    const names=['霓虹飞车','星际突击','星芽远征','弹珠工坊','银河守卫','小蛇大冒险','果园派对'];
+    const icons=['🏎️','🚀','🌱','🪄','🛸','🐍','🍓'];
     const palettes=['#ff748d','#f4ae55','#70d7a5','#71c6ed','#b29aff','#6bd5c5','#ff9e72'];
     const random=(min,max)=>min+Math.random()*(max-min);
     const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
@@ -160,25 +160,36 @@
 
     function buildLevel(kind,level){
       const width=9600;
-      const world={width,platforms:[],coins:[],enemies:[],obstacles:[],boss:null,seed:Math.random()};
+      const world={width,platforms:[],coins:[],enemies:[],obstacles:[],blocks:[],checkpoints:[],boss:null,seed:Math.random()};
       if(kind===2){
         let cursor=0;
         while(cursor<width){
-          const gap=cursor>430&&Math.random()<.17?random(48,102):0;
+          const gap=cursor>430&&Math.random()<.2?random(45,92):0;
           cursor+=gap;
-          const span=random(155,280);
-          const top=random(403,462);
+          const span=random(190,310);
+          const top=random(414,458);
           world.platforms.push({x:cursor,w:Math.min(span,width-cursor),y:top});
           if(cursor>140&&cursor<width-250&&Math.random()<.72){
-            world.coins.push({x:cursor+random(45,Math.max(50,span-24)),y:top-random(54,105),taken:false});
+            world.coins.push({x:cursor+random(48,Math.max(54,span-30)),y:top-random(72,116),taken:false});
           }
-          if(cursor>350&&cursor<width-300&&Math.random()<.4){
-            world.enemies.push({x:cursor+random(36,Math.max(40,span-35)),y:top-28,min:cursor+8,max:cursor+span-34,dir:Math.random()<.5?-1:1,speed:random(28,54)+level*2,alive:true});
+          if(cursor>350&&cursor<width-600&&Math.random()<.36){
+            world.enemies.push({x:cursor+random(36,Math.max(42,span-38)),y:top-32,min:cursor+8,max:cursor+span-38,dir:Math.random()<.5?-1:1,speed:random(28,48)+level*2,alive:true});
+          }
+          if(cursor>240&&cursor<width-800&&Math.random()<.62){
+            const blockX=cursor+random(52,Math.max(58,span-44));
+            world.blocks.push({x:blockX,y:top-random(104,130),state:'sealed',bump:0});
+            if(Math.random()<.65)world.coins.push({x:blockX+20,y:top-random(159,190),taken:false});
+          }
+          if(cursor>900&&Math.random()<.18){
+            world.checkpoints.push({x:cursor+span*.55,y:top-56,active:false});
           }
           cursor+=span;
         }
-        world.platforms.unshift({x:0,w:370,y:450});
-        world.flagX=width-180;
+        world.platforms.unshift({x:0,w:420,y:450});
+        world.platforms.push({x:width-780,w:780,y:438});
+        world.checkpoints.push({x:width*.5,y:390,active:false});
+        world.boss={x:width-430,y:438-78,baseY:438-78,w:96,h:78,hp:3,maxHp:3,dir:-1,speed:38+level*3,min:width-540,max:width-285,flash:0};
+        world.flagX=width-116;
       }else{
         for(let i=0;i<36;i++){
           const x=320+i*230+random(-45,45);
@@ -193,7 +204,7 @@
 
     function start(index,level=1,score=0,life=3){
       selected=index;scene='play';paused=false;frame=0;
-      game={score,life,level,t:0,over:false,win:false,cleared:false,px:index===2?90:180,py:410,vx:0,vy:0,cool:0,camera:0,objects:[],shots:[],enemies:[],enemyShots:[],world:null};
+      game={score,life,level,t:0,over:false,win:false,cleared:false,px:index===2?90:180,py:410,vx:0,vy:0,cool:0,camera:0,checkpointX:90,invulnerable:0,objects:[],shots:[],enemies:[],enemyShots:[],world:null};
       if(index===1||index===2)game.world=buildLevel(index,level);
       if(index===3){
         game.px=440;game.ball={x:480,y:350,vx:3,vy:-4};game.bricks=[];
@@ -207,7 +218,7 @@
     }
     function updateHint(){
       const hint=document.getElementById('hint');
-      hint.textContent=scene==='menu'?'← → 选择游戏　·　空格开始　·　手机可使用屏幕按钮':selected===2?'← → 移动　·　↑ / 空格 跳跃　·　抵达终点旗帜进入随机新关':selected===1?'← → 移动　·　空格射击　·　击败关底 Boss 进入随机新关':'方向键移动　·　空格跳跃 / 射击　·　Esc 返回大厅　·　P 暂停';
+      hint.textContent=scene==='menu'?'← → 选择游戏　·　空格开始　·　手机可使用屏幕按钮':selected===2?'← → 移动　·　↑ / 空格 跳跃　·　踩敌人 / 顶星芽箱　·　击败关底守卫':selected===1?'← → 移动　·　空格射击　·　击败关底 Boss 进入随机新关':'方向键移动　·　空格跳跃 / 射击　·　Esc 返回大厅　·　P 暂停';
     }
     function saveScore(){
       highScores[selected]=Math.max(highScores[selected]||0,game.score);
@@ -230,6 +241,7 @@
       if(g.cleared){fadeMusic();if(action())nextStage();return}
       if(selected===2){
         const oldY=g.py;
+        g.invulnerable=Math.max(0,g.invulnerable-dt);
         g.px=clamp(g.px+(held('ArrowLeft')?-260*dt:0)+(held('ArrowRight')?260*dt:0),0,world.width-32);
         if((held('ArrowUp','Space','Enter'))&&g.onGround){g.vy=-530;g.onGround=false}
         g.vy+=1450*dt;g.py+=g.vy*dt;g.onGround=false;
@@ -238,17 +250,45 @@
             g.py=platform.y-38;g.vy=0;g.onGround=true;
           }
         }
+        for(const block of world.blocks){
+          block.bump=Math.max(0,block.bump-dt);
+          const blockY=block.y-(block.bump>0?Math.sin(block.bump*32)*5:0);
+          if(g.vy<0&&oldY>=blockY+24&&g.py<=blockY+24&&g.px+30>block.x&&g.px<block.x+40){
+            g.py=blockY+24;g.vy=110;block.bump=.18;
+            if(block.state==='sealed'){block.state='opened';g.score+=20;world.coins.push({x:block.x+20,y:block.y-18,taken:false,bonus:true})}
+            else if(block.state==='opened'){g.score+=5}
+          }
+        }
         for(const coin of world.coins)if(!coin.taken&&overlap(g.px,g.py,30,38,coin.x-11,coin.y-11,22,22)){coin.taken=true;g.score+=10}
         for(const enemy of world.enemies)if(enemy.alive){
           enemy.x+=enemy.dir*enemy.speed*dt;
           if(enemy.x<enemy.min||enemy.x>enemy.max)enemy.dir*=-1;
           if(overlap(g.px,g.py,30,38,enemy.x,enemy.y,28,28)){
             if(g.vy>40&&oldY+38<enemy.y+13){enemy.alive=false;g.vy=-300;g.score+=25}
-            else{enemy.alive=false;g.px=Math.max(0,g.px-80);loseLife()}
+            else if(g.invulnerable===0){g.px=Math.max(g.checkpointX,g.px-80);g.invulnerable=1.1;loseLife()}
           }
         }
-        if(g.py>H+120){loseLife();g.px=Math.max(0,g.px-170);g.py=250;g.vy=0}
-        if(g.px+25>=world.flagX){g.cleared=true;saveScore();fadeMusic()}
+        for(const checkpoint of world.checkpoints)if(!checkpoint.active&&g.px>=checkpoint.x){
+          checkpoint.active=true;g.checkpointX=checkpoint.x;g.score+=50;
+        }
+        const boss=world.boss;
+        if(boss){
+          boss.x+=boss.dir*boss.speed*dt;
+          if(boss.x<boss.min||boss.x>boss.max)boss.dir*=-1;
+          boss.flash=Math.max(0,boss.flash-dt);
+          boss.hitCooldown=Math.max(0,(boss.hitCooldown||0)-dt);
+          const bossTopContact=g.px+30>boss.x&&g.px<boss.x+boss.w&&g.vy>=0&&oldY+38<=boss.y+8&&g.py+38>=boss.y;
+          if(bossTopContact){
+            if(g.vy>35&&boss.hitCooldown===0){
+              boss.hp--;boss.hitCooldown=.72;boss.flash=.24;g.vy=-390;g.score+=100;
+              if(boss.hp<=0){world.boss=null;g.cleared=true;saveScore();fadeMusic()}
+            }else{g.py=boss.y-38;g.vy=0;g.onGround=true}
+          }else if(overlap(g.px,g.py,30,38,boss.x,boss.y,boss.w,boss.h)&&g.py+38>boss.y+14&&g.invulnerable===0){
+              g.px=Math.max(g.checkpointX,boss.x-38);g.invulnerable=1.1;loseLife();
+          }
+        }
+        if(g.py>H+120){loseLife();g.px=g.checkpointX;g.py=260;g.vy=0;g.invulnerable=.8}
+        if(world.boss===null&&g.px+25>=world.flagX){g.cleared=true;saveScore();fadeMusic()}
       }else{
         g.px=clamp(g.px+(held('ArrowLeft')?-250*dt:0)+(held('ArrowRight')?250*dt:0),0,world.width-40);
         if(held('ArrowUp','ArrowDown'))g.py=clamp(g.py+(held('ArrowUp')?-120*dt:0)+(held('ArrowDown')?120*dt:0),318,446);
@@ -385,7 +425,7 @@
       ctx.restore();
       text(icons[index],x+40,y+51,25,'#fff','center');
       text(names[index],x+75,y+43,17,'#fff');
-      text(index===2?'长地图 · 旗帜终点':index===1?'长地图 · 关底 Boss':`最高分 ${highScores[index]||0}`,x+75,y+71,10,'#aebbd0');
+      text(index===2?'横版冒险 · 星芽收集':index===1?'长地图 · 关底 Boss':`最高分 ${highScores[index]||0}`,x+75,y+71,10,'#aebbd0');
       rounded(x+18,y+91,active?169:0,3,2,color);
       if(active)text('ENTER ↗',x+188,y+108,9,color,'right');
     }
@@ -407,6 +447,19 @@
       rounded(x+23,y+17,5,5,2,'#273044');
       rounded(x-1,y+4,43,9,5,'#5c4261');
     }
+    function drawStarCourier(x,y){
+      ctx.save();
+      ctx.translate(x,y);
+      rounded(5,33,10,17,5,'#27354a');
+      rounded(22,33,10,17,5,'#27354a');
+      rounded(3,24,34,19,8,'#37a98e');
+      rounded(6,7,28,23,10,'#f3c995');
+      rounded(3,4,34,10,6,'#263d56');
+      rounded(20,15,6,6,3,'#23354b');
+      ctx.beginPath();ctx.moveTo(12,6);ctx.quadraticCurveTo(4,-8,14,-2);ctx.quadraticCurveTo(21,0,16,7);ctx.fillStyle='#77d888';ctx.fill();
+      ctx.beginPath();ctx.moveTo(12,26);ctx.lineTo(30,31);ctx.lineTo(16,39);ctx.closePath();ctx.fillStyle='#ed7981';ctx.fill();
+      ctx.restore();
+    }
     function drawEnemy(x,y,color='#e77375'){
       rounded(x,y+8,32,23,10,color);
       rounded(x+5,y+1,22,16,8,color);
@@ -421,23 +474,76 @@
     function drawLongGame(){
       const g=game,w=g.world,camera=g.camera;
       if(selected===2){
-        background('#82c9e6','#f5d8ad');
-        rect(0,456,W,84,gradient(456,540,[[0,'#397d67'],[1,'#234a49']]));
+        background('#80cdea','#ffdfa9');
+        ctx.globalAlpha=.36;
+        for(let i=0;i<5;i++){
+          const cloudX=((i*283-camera*.16)%1180+1180)%1180-100;
+          rounded(cloudX,170+(i%3)*57,125,23,12,'#fff5e3');
+          rounded(cloudX+22,153+(i%3)*57,60,30,15,'#fff5e3');
+        }
+        ctx.globalAlpha=1;
+        for(let i=0;i<8;i++){
+          const flowerX=((i*181-camera*.4)%1080+1080)%1080-60;
+          rounded(flowerX,415+(i%3)*18,4,30,2,'#347956');
+          drawCoin(flowerX+2,413+(i%3)*18);
+        }
+        rect(0,496,W,44,gradient(496,540,[[0,'#4bb8a0'],[1,'#238c83']]));
         for(const platform of w.platforms){
           const x=platform.x-camera;if(x+platform.w<0||x>W)continue;
-          rounded(x,platform.y,platform.w,90,7,'#955f45');
-          rounded(x,platform.y,platform.w,12,6,'#73c878');
-          for(let i=0;i<platform.w;i+=30)rect(x+i,platform.y+20,14,4,'#bd8a57');
+          rounded(x,platform.y,platform.w,98,8,'#9c7059');
+          rounded(x,platform.y,platform.w,14,7,'#68c98b');
+          for(let tileX=0;tileX<platform.w;tileX+=34){
+            rect(x+tileX,platform.y+32,16,4,'#d49d70');
+            rect(x+tileX+19,platform.y+58,12,4,'#d49d70');
+          }
         }
         for(const coin of w.coins)if(!coin.taken)drawCoin(coin.x-camera,coin.y);
-        for(const enemy of w.enemies)if(enemy.alive)drawEnemy(enemy.x-camera,enemy.y,'#9b76d6');
+        for(const block of w.blocks){
+          const blockY=block.y-(block.bump>0?Math.sin(block.bump*32)*5:0);
+          const blockX=block.x-camera;
+          if(blockX<-45||blockX>W+45)continue;
+          rounded(blockX,blockY,40,27,7,block.state==='sealed'?'#e6a34f':'#887a75','#fff0bf');
+          rounded(blockX+5,blockY+5,30,4,2,'#fff3c366');
+          text(block.state==='sealed'?'✦':'·',blockX+20,blockY+21,17,block.state==='sealed'?'#fff3c8':'#d1bbb0','center');
+        }
+        for(const checkpoint of w.checkpoints){
+          const postX=checkpoint.x-camera;
+          if(postX>-25&&postX<W+25){
+            rounded(postX,checkpoint.y,6,62,3,'#f7efda');
+            ctx.beginPath();ctx.moveTo(postX+6,checkpoint.y+4);ctx.lineTo(postX+35,checkpoint.y+14);ctx.lineTo(postX+6,checkpoint.y+25);ctx.closePath();ctx.fillStyle=checkpoint.active?'#ffd875':'#8e9bad';ctx.fill();
+            rounded(postX-7,checkpoint.y+59,20,7,3,'#637987');
+          }
+        }
+        for(const enemy of w.enemies)if(enemy.alive){
+          const enemyX=enemy.x-camera;
+          rounded(enemyX,enemy.y+10,30,20,10,'#815fb2');
+          rounded(enemyX+4,enemy.y+2,22,17,8,'#a987d2');
+          rounded(enemyX+8,enemy.y+9,5,6,2,'#fff');rounded(enemyX+19,enemy.y+9,5,6,2,'#fff');
+          rect(enemyX+10,enemy.y+11,2,3,'#302947');rect(enemyX+21,enemy.y+11,2,3,'#302947');
+          rounded(enemyX+4,enemy.y+27,8,6,3,'#493d65');rounded(enemyX+19,enemy.y+27,8,6,3,'#493d65');
+        }
+        if(w.boss){
+          const bx=w.boss.x-camera,by=w.boss.y;
+          if(bx>-150&&bx<W+150){
+            const glow=w.boss.flash>0?'#fff0bc':'#986d83';
+            rounded(bx+12,by+28,75,48,21,glow);
+            rounded(bx+19,by+5,59,44,23,w.boss.flash>0?'#fff0bc':'#c28e9c');
+            rounded(bx+27,by+20,11,14,5,'#fff');rounded(bx+58,by+20,11,14,5,'#fff');
+            rect(bx+32,by+25,5,7,'#26354a');rect(bx+62,by+25,5,7,'#26354a');
+            ctx.beginPath();ctx.moveTo(bx+20,by+8);ctx.lineTo(bx+7,by-1);ctx.lineTo(bx+23,by+1);ctx.fillStyle='#e8cc83';ctx.fill();
+            ctx.beginPath();ctx.moveTo(bx+71,by+8);ctx.lineTo(bx+88,by-2);ctx.lineTo(bx+77,by+15);ctx.fillStyle='#e8cc83';ctx.fill();
+            panel(bx-4,by-22,104,11,'#24364c');
+            rounded(bx,by-19,96*(w.boss.hp/w.boss.maxHp),5,3,'#f47e87');
+            text('石云守卫',bx+48,by-29,11,'#34445b','center');
+          }
+        }
         const flagX=w.flagX-camera;
         if(flagX>-30&&flagX<W){
-          rounded(flagX,260,8,200,4,'#f7f1dd');
-          ctx.beginPath();ctx.moveTo(flagX+8,266);ctx.lineTo(flagX+77,287);ctx.lineTo(flagX+8,311);ctx.closePath();ctx.fillStyle='#f26075';ctx.fill();
-          rounded(flagX-24,450,56,12,5,'#694c48');
+          rounded(flagX,263,7,175,4,'#f7f1dd');
+          ctx.beginPath();ctx.moveTo(flagX+7,269);ctx.lineTo(flagX+64,285);ctx.lineTo(flagX+7,305);ctx.closePath();ctx.fillStyle='#ffbd67';ctx.fill();
+          rounded(flagX-22,433,52,11,5,'#586a73');
         }
-        drawHero(g.px-camera,g.py);
+        if(g.invulnerable===0||Math.floor(g.invulnerable*14)%2===0)drawStarCourier(g.px-camera,g.py);
       }else{
         background('#293f64','#131b2c');
         rect(0,452,W,88,gradient(452,540,[[0,'#37475b'],[1,'#202d3b']]));
@@ -472,7 +578,7 @@
       drawHUD();
     }
     function drawHUD(){
-      const g=game,progress=selected===2?g.px/g.world.flagX:g.px/(g.world.width-100);
+      const g=game,progress=selected===2?g.px/(g.world.boss?.x||g.world.flagX):g.px/(g.world.width-100);
       panel(20,19,920,52,'#101827cf');
       text(names[selected],43,52,16,'#fff');
       text(`第 ${g.level} 关`,270,51,14,'#f6ca79');
