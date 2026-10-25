@@ -11,6 +11,8 @@
     body{margin:0;min-height:100vh;overflow:hidden;background:radial-gradient(ellipse at 50% 0%,#273858 0%,#111827 68%);color:#f7f8ff}
     canvas{position:absolute;inset:0;margin:auto;width:min(100vw,177.7778vh);height:min(100vh,56.25vw);display:block}
     #hint{position:fixed;left:50%;bottom:15px;transform:translateX(-50%);width:max-content;max-width:calc(100vw - 24px);padding:9px 16px;border:1px solid #ffffff1c;border-radius:999px;background:#101827b8;color:#d9e2f4;text-align:center;font:12px/1.4 Inter,"PingFang SC",sans-serif;backdrop-filter:blur(12px);pointer-events:none}
+    #music-toggle{position:fixed;top:18px;right:18px;width:auto;height:40px;padding:0 14px;border-radius:999px;background:#17253ddd;font:600 12px Inter,"PingFang SC",sans-serif;letter-spacing:.02em}
+    #music-toggle[aria-pressed="false"]{color:#aab6ca}
     #touch{position:fixed;inset:auto 0 20px;display:flex;justify-content:space-between;padding:0 18px;pointer-events:none}
     .cluster{display:flex;gap:9px;pointer-events:auto}
     button{width:54px;height:50px;border:1px solid #ffffff42;border-radius:16px;background:#17253ddd;color:#fff;font:700 20px Inter,sans-serif;box-shadow:0 6px 18px #0005;touch-action:none}
@@ -23,6 +25,7 @@
 <body>
   <canvas id="game" width="960" height="540" aria-label="游乐星球游戏画面"></canvas>
   <div id="hint">方向键移动　·　空格跳跃 / 射击　·　Esc 返回大厅　·　P 暂停</div>
+  <button id="music-toggle" type="button" aria-label="关闭背景音乐" aria-pressed="true">♫ 音乐开</button>
   <div id="touch" aria-label="触屏操作">
     <div class="cluster">
       <button data-key="ArrowLeft" aria-label="向左">←</button>
@@ -47,6 +50,86 @@
     let scene='menu',selected=0,game=null,paused=false,last=0,frame=0;
     let highScores={};
     try{highScores=JSON.parse(localStorage.getItem('arcadeHighScores')||'{}')}catch(error){console.warn('无法读取本地最高分。',error)}
+    const musicTracks=[
+      {tempo:148,root:48,lead:[0,7,12,7,4,7,11,7,2,9,14,9,7,4,2,4],bass:[0,0,7,0,4,4,7,4]},
+      {tempo:116,root:45,lead:[0,3,7,10,12,10,7,3,5,8,12,15,14,12,8,5],bass:[0,0,5,7,0,0,8,7]},
+      {tempo:132,root:52,lead:[0,4,7,12,11,7,4,7,2,5,9,14,12,9,5,2],bass:[0,7,0,7,5,12,5,12]},
+      {tempo:164,root:55,lead:[0,7,12,16,12,7,4,7,2,9,14,17,14,9,7,4],bass:[0,0,7,0,5,5,7,5]},
+      {tempo:108,root:43,lead:[0,7,10,14,12,10,7,5,3,10,14,17,15,14,10,7],bass:[0,0,3,7,0,0,5,7]},
+      {tempo:124,root:50,lead:[0,3,7,10,7,3,5,8,12,8,5,3,2,5,9,5],bass:[0,3,7,3,5,8,12,8]},
+      {tempo:140,root:53,lead:[0,4,9,12,9,7,4,7,5,9,12,16,12,9,7,4],bass:[0,0,5,0,4,4,7,4]}
+    ];
+    const musicButton=document.getElementById('music-toggle');
+    let audioContext=null,musicGain=null,musicTimer=null,musicTrack=-1,musicStep=0,nextMusicBeat=0,musicMuted=false;
+
+    function ensureAudio(){
+      if(!audioContext){
+        const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+        if(!AudioContextClass){
+          musicButton.textContent='音频不可用';
+          musicButton.disabled=true;
+          return false;
+        }
+        audioContext=new AudioContextClass();
+        musicGain=audioContext.createGain();
+        musicGain.gain.value=0;
+        musicGain.connect(audioContext.destination);
+      }
+      if(audioContext.state==='suspended')audioContext.resume().catch(error=>console.warn('无法启动背景音乐。',error));
+      return true;
+    }
+    function noteFrequency(midi){return 440*Math.pow(2,(midi-69)/12)}
+    function playTone(midi,when,duration,wave,volume){
+      if(!audioContext||!musicGain||musicMuted)return;
+      const oscillator=audioContext.createOscillator();
+      const envelope=audioContext.createGain();
+      oscillator.type=wave;
+      oscillator.frequency.setValueAtTime(noteFrequency(midi),when);
+      envelope.gain.setValueAtTime(.0001,when);
+      envelope.gain.exponentialRampToValueAtTime(volume,when+.012);
+      envelope.gain.exponentialRampToValueAtTime(.0001,when+duration);
+      oscillator.connect(envelope);
+      envelope.connect(musicGain);
+      oscillator.start(when);
+      oscillator.stop(when+duration+.015);
+    }
+    function scheduleMusic(){
+      if(!audioContext||musicTrack<0||scene!=='play'||paused||game?.over||game?.cleared)return;
+      const track=musicTracks[musicTrack],beat=60/track.tempo;
+      while(nextMusicBeat<audioContext.currentTime+.12){
+        const step=musicStep%track.lead.length;
+        const melody=track.lead[step];
+        if(melody!==null)playTone(track.root+melody,nextMusicBeat,beat*.72,'square',.035);
+        if(step%2===0){
+          const bass=track.bass[(step/2)%track.bass.length];
+          playTone(track.root-12+bass,nextMusicBeat,beat*.9,'triangle',.055);
+        }
+        if(step===0||step===8){
+          playTone(track.root+12+track.lead[step],nextMusicBeat,beat*1.5,'triangle',.018);
+        }
+        nextMusicBeat+=beat/2;
+        musicStep++;
+      }
+    }
+    function setMusicTrack(index){
+      if(!ensureAudio())return;
+      musicTrack=index;musicStep=0;nextMusicBeat=audioContext.currentTime+.06;
+      if(musicTimer===null)musicTimer=window.setInterval(scheduleMusic,40);
+      musicGain.gain.cancelScheduledValues(audioContext.currentTime);
+      musicGain.gain.setTargetAtTime(musicMuted||paused?0.0001:0.8,audioContext.currentTime,.12);
+      updateMusicButton();
+    }
+    function updateMusicButton(){
+      musicButton.textContent=musicMuted?'♫ 音乐关':'♫ 音乐开';
+      musicButton.setAttribute('aria-pressed',String(!musicMuted));
+      musicButton.setAttribute('aria-label',musicMuted?'开启背景音乐':'关闭背景音乐');
+    }
+    function toggleMusic(){
+      if(!ensureAudio())return;
+      musicMuted=!musicMuted;
+      if(musicGain)musicGain.gain.setTargetAtTime(musicMuted?0.0001:scene==='play'&&!paused?0.8:0,audioContext.currentTime,.08);
+      updateMusicButton();
+    }
 
     function rect(x,y,w,h,color){
       ctx.fillStyle=color;
@@ -119,6 +202,7 @@
       if(index===4){game.px=455;game.py=430}
       if(index===5){game.snake=[{x:16,y:12},{x:15,y:12},{x:14,y:12}];game.dir={x:1,y:0};game.next={x:1,y:0};game.food={x:25,y:12};game.step=0;game.life=1}
       if(index===6){game.px=440;game.life=3}
+      setMusicTrack(index);
       updateHint();
     }
     function updateHint(){
@@ -131,7 +215,10 @@
     }
     function loseLife(){
       game.life--;
-      if(game.life<=0){game.over=true;saveScore()}
+      if(game.life<=0){game.over=true;saveScore();fadeMusic()}
+    }
+    function fadeMusic(){
+      if(musicGain&&audioContext)musicGain.gain.setTargetAtTime(0,audioContext.currentTime,.18);
     }
     function overlap(a,b,w,h,c,d,e,f){return a<c+e&&a+w>c&&b<d+f&&b+h>d}
     function nextStage(){
@@ -140,7 +227,7 @@
     function updateLongGame(dt){
       const g=game,world=g.world;
       g.cool=Math.max(0,g.cool-dt);
-      if(g.cleared){if(action())nextStage();return}
+      if(g.cleared){fadeMusic();if(action())nextStage();return}
       if(selected===2){
         const oldY=g.py;
         g.px=clamp(g.px+(held('ArrowLeft')?-260*dt:0)+(held('ArrowRight')?260*dt:0),0,world.width-32);
@@ -161,7 +248,7 @@
           }
         }
         if(g.py>H+120){loseLife();g.px=Math.max(0,g.px-170);g.py=250;g.vy=0}
-        if(g.px+25>=world.flagX){g.cleared=true;saveScore()}
+        if(g.px+25>=world.flagX){g.cleared=true;saveScore();fadeMusic()}
       }else{
         g.px=clamp(g.px+(held('ArrowLeft')?-250*dt:0)+(held('ArrowRight')?250*dt:0),0,world.width-40);
         if(held('ArrowUp','ArrowDown'))g.py=clamp(g.py+(held('ArrowUp')?-120*dt:0)+(held('ArrowDown')?120*dt:0),318,446);
@@ -184,7 +271,7 @@
           for(const shot of g.shots)if(overlap(shot.x,shot.y,18,7,boss.x,boss.y,boss.w,boss.h)){
             shot.x=world.width+100;boss.hp--;g.score+=20;
           }
-          if(boss.hp<=0){world.boss=null;g.cleared=true;saveScore()}
+          if(boss.hp<=0){world.boss=null;g.cleared=true;saveScore();fadeMusic()}
         }
         for(const shot of g.enemyShots){
           shot.x-=320*dt;
@@ -205,8 +292,11 @@
         if(action())start(selected);
         return;
       }
-      if(pressed('Escape')||pressed('Backspace')){scene='menu';updateHint();return}
-      if(pressed('KeyP'))paused=!paused;
+      if(pressed('Escape')||pressed('Backspace')){scene='menu';fadeMusic();updateHint();return}
+      if(pressed('KeyP')){
+        paused=!paused;
+        if(musicGain&&audioContext)musicGain.gain.setTargetAtTime(musicMuted||paused?0.0001:0.8,audioContext.currentTime,.1);
+      }
       if(paused)return;
       if(game.over){if(action())start(selected);return}
       game.t+=dt;
@@ -225,7 +315,7 @@
         if(ball.vy>0&&overlap(ball.x-8,ball.y-8,16,16,game.px,488,100,14)){ball.vy=-Math.abs(ball.vy);ball.vx=clamp((ball.x-(game.px+50))/12,-6,6)}
         if(ball.y>H){loseLife();ball.x=game.px+50;ball.y=370;ball.vx=3;ball.vy=-4}
         for(const brick of game.bricks)if(brick.alive&&overlap(ball.x-7,ball.y-7,14,14,brick.x,brick.y,56,21)){brick.alive=false;ball.vy*=-1;game.score+=10;break}
-        if(game.bricks.every(brick=>!brick.alive)){game.cleared=true;saveScore()}
+        if(game.bricks.every(brick=>!brick.alive)){game.cleared=true;saveScore();fadeMusic()}
       }
       if(selected===4){
         game.px=clamp(game.px+(held('ArrowLeft')?-310*dt:0)+(held('ArrowRight')?310*dt:0),0,920);
@@ -264,6 +354,7 @@
         for(const object of game.objects){object.y+=205*dt;if(!object.hit&&overlap(game.px,468,90,22,object.x,object.y,24,24)){object.hit=true;object.y=700;if(object.bad)loseLife();else game.score+=10}}
         game.objects=game.objects.filter(object=>object.y<600);
       }
+      if(game.over||game.cleared)fadeMusic();
       if(game.cleared&&action())nextStage();
     }
 
@@ -480,6 +571,7 @@
     document.addEventListener('keydown',event=>{
       const key=normalize(event.key);
       if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Enter','Escape','Backspace'].includes(key))event.preventDefault();
+      if(!keys[key])ensureAudio();
       if(!keys[key])justPressed.add(key);
       keys[key]=true;
     });
@@ -487,9 +579,10 @@
     window.addEventListener('blur',()=>{for(const key in keys)keys[key]=false;justPressed.clear()});
     document.querySelectorAll('button[data-key]').forEach(button=>{
       const key=button.dataset.key;
-      button.addEventListener('pointerdown',event=>{event.preventDefault();keys[key]=true;button.setPointerCapture(event.pointerId)});
+      button.addEventListener('pointerdown',event=>{event.preventDefault();ensureAudio();keys[key]=true;justPressed.add(key);button.setPointerCapture(event.pointerId)});
       for(const eventName of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(eventName,()=>keys[key]=false);
     });
+    musicButton.addEventListener('click',toggleMusic);
     requestAnimationFrame(loop);
   </script>
 </body>
